@@ -1,0 +1,33 @@
+replicaCount: 1
+
+image:
+  # Only images PROMOTED to prod are deployed - never the dev repository
+  repository: <server>.jfrog.io/juice-docker-prod-local/juice-shop
+  tag: "<build-number>"
+  pullPolicy: IfNotPresent
+
+# kubectl create secret docker-registry jfrog-pull \
+#   --docker-server=<server>.jfrog.io --docker-username=<user> --docker-password=<read-only token>
+imagePullSecrets:
+  - name: jfrog-pull
+
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 3000
+
+resources:
+  requests: { cpu: 250m, memory: 384Mi }
+  limits:   { cpu: "1",  memory: 768Mi }
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 0
+  seccompProfile: { type: RuntimeDefault }
+
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities: { drop: ["ALL"] }
+  # Juice Shop writes its SQLite DB and logs at runtime, so the root FS stays writable
+  readOnlyRootFilesystem: false

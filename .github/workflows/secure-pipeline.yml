@@ -1,0 +1,229 @@
+# -----------------------------------------------------------------------------
+# Secure CI pipeline for OWASP Juice Shop on the JFrog Platform
+#
+#  1. OIDC login to JFrog (no long-lived secrets in GitHub)
+#  2. Dependencies resolved ONLY through Artifactory (curated npm remote)
+#  3. Compile (TypeScript server + Angular frontend)
+#  4. Run the existing unit tests
+#  5. Build a runnable Docker image (base images via curated Docker remotes)
+#  6. GATE 1 - Xray scan of the local image before it is pushed
+#  7. Push image + publish build-info (deps, git, env, image digest)
+#  8. GATE 2 - Xray build scan against the org policy ("fail build")
+#  9. Promote the SAME image dev -> prod (no rebuild), with status & props
+# 10. Export evidence: CycloneDX SBOM + Xray scan data (JSON)
+# -----------------------------------------------------------------------------
+name: secure-pipeline
+
+on:
+  push:
+    branches: [ master, main ]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  id-token: write        # required for OIDC authentication to JFrog
+  contents: read
+  actions: read
+
+concurrency:
+  group: secure-pipeline-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # --- set these as GitHub repository *variables* (Settings > Secrets and variables > Actions > Variables)
+  JF_URL: ${{ vars.JF_URL }}                       # e.g. https://acme.jfrog.io
+  JF_HOST: ${{ vars.JF_HOST }}                     # e.g. acme.jfrog.io (no scheme)
+  JF_OIDC_PROVIDER: ${{ vars.JF_OIDC_PROVIDER }}   # Provider Name of the OIDC integration in JFrog
+  XRAY_FAIL_BUILD: ${{ vars.XRAY_FAIL_BUILD || 'true' }}  # set to 'false' only while rehearsing
+  # --- repository layout (JFrog naming convention: <team>-<tech>-<maturity>-<locator>)
+  NPM_VIRTUAL: juice-npm-virtual
+  DOCKER_VIRTUAL: juice-docker-virtual
+  DOCKER_DEV: juice-docker-dev-local
+  DOCKER_PROD: juice-docker-prod-local
+  XRAY_WATCH: juice-shop-watch
+  # --- build identity used for build-info, scans and promotion
+  BUILD_NAME: juice-shop
+  BUILD_NUMBER: ${{ github.run_number }}
+  IMAGE_NAME: juice-shop
+  NODE_VERSION: '24'
+
+jobs:
+  build-scan-promote:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash            # explicit bash => -eo pipefail, so "| tee" never hides a failed gate
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0              # full history so build-info can collect VCS data
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      # ---------------------------------------------------------------- 1. OIDC
+      - name: Set up JFrog CLI (OIDC, no stored token)
+        id: jfrog
+        uses: jfrog/setup-jfrog-cli@v4
+        env:
+          JF_URL: ${{ env.JF_URL }}
+        with:
+          oidc-provider-name: ${{ env.JF_OIDC_PROVIDER }}
+
+      - name: Check connectivity
+        run: jf rt ping
+
+      # ------------------------------------------------- 2. Secure dependency resolution
+      - name: Route npm through Artifactory only
+        env:
+          JF_TOKEN: ${{ steps.jfrog.outputs.oidc-token }}
+        run: |
+          # JFrog CLI config (used by `jf npm ...` to resolve + collect build-info)
+          jf npm-config --repo-resolve="$NPM_VIRTUAL" --server-id-resolve=setup-jfrog-cli-server
+          (cd frontend && jf npm-config --repo-resolve="$NPM_VIRTUAL" --server-id-resolve=setup-jfrog-cli-server)
+          # User-level .npmrc so that EVERY npm call (incl. Juice Shop's postinstall
+          # and the Docker build) resolves through the curated virtual repo, never npmjs.org
+          npm config set registry "${JF_URL}/artifactory/api/npm/${NPM_VIRTUAL}/"
+          npm config set "//${JF_HOST}/artifactory/api/npm/${NPM_VIRTUAL}/:_authToken" "${JF_TOKEN}"
+          npm config get registry
+
+      - name: Curation audit (report packages that policies would block)
+        continue-on-error: true      # the real enforcement happens at download time (HTTP 403)
+        run: jf curation-audit --working-dirs=".,frontend"
+
+      - name: Install frontend dependencies (recorded in build-info)
+        working-directory: frontend
+        run: >
+          jf npm install --legacy-peer-deps
+          --build-name="$BUILD_NAME" --build-number="$BUILD_NUMBER" --module=juice-shop-frontend
+
+      - name: Install server dependencies (recorded in build-info)
+        run: >
+          jf npm install
+          --build-name="$BUILD_NAME" --build-number="$BUILD_NUMBER" --module=juice-shop-server
+
+      # ---------------------------------------------------------------- 3. Compile
+      - name: Compile (TypeScript server + Angular frontend)
+        run: |
+          npm run build:server
+          test -d frontend/dist || npm run build:frontend
+          test -f build/app.js
+
+      # ---------------------------------------------------------------- 4. Tests
+      - name: Run unit tests (existing Juice Shop test suites)
+        env:
+          CI: 'true'
+        run: npm test
+
+      # ---------------------------------------------------------------- 5. Docker image
+      - name: Log in to Artifactory Docker registry (OIDC credentials)
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.JF_HOST }}
+          username: ${{ steps.jfrog.outputs.oidc-user }}
+          password: ${{ steps.jfrog.outputs.oidc-token }}
+
+      - name: Build Docker image (base images via curated Docker remotes)
+        run: |
+          IMAGE="${JF_HOST}/${DOCKER_DEV}/${IMAGE_NAME}:${BUILD_NUMBER}"
+          echo "IMAGE=${IMAGE}" >> "$GITHUB_ENV"
+          DOCKER_BUILDKIT=1 docker build \
+            --secret id=npmrc,src="$HOME/.npmrc" \
+            --build-arg BUILDER_IMAGE="${JF_HOST}/${DOCKER_VIRTUAL}/library/node:${NODE_VERSION}-bookworm" \
+            --build-arg RUNTIME_IMAGE="${JF_HOST}/${DOCKER_VIRTUAL}/distroless/nodejs${NODE_VERSION}-debian13:nonroot" \
+            --build-arg VCS_REF="${GITHUB_SHA}" \
+            --build-arg BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --label "jfrog.build.name=${BUILD_NAME}" \
+            --label "jfrog.build.number=${BUILD_NUMBER}" \
+            -t "${IMAGE}" .
+
+      # ---------------------------------------------------------------- 6. GATE 1
+      - name: "GATE 1 - Xray scan of the image before push"
+        run: |
+          mkdir -p reports
+          jf docker scan "$IMAGE" --watches="$XRAY_WATCH" --vuln \
+             --fail="$XRAY_FAIL_BUILD" --format=table | tee reports/xray-docker-scan.txt
+
+      # ---------------------------------------------------------------- 7. Push + build-info
+      - name: Push image and collect build-info
+        run: jf docker push "$IMAGE" --build-name="$BUILD_NAME" --build-number="$BUILD_NUMBER"
+
+      - name: Publish build-info (Git + environment + dependencies + image)
+        run: |
+          jf rt build-add-git "$BUILD_NAME" "$BUILD_NUMBER"
+          jf rt build-collect-env "$BUILD_NAME" "$BUILD_NUMBER"
+          jf rt build-publish "$BUILD_NAME" "$BUILD_NUMBER" \
+             --env-exclude="*password*;*secret*;*key*;*token*;*auth*;*npmrc*"
+
+      # ---------------------------------------------------------------- 8. GATE 2
+      - name: "GATE 2 - Xray build scan against the org policy"
+        run: |
+          jf build-scan "$BUILD_NAME" "$BUILD_NUMBER" --vuln --fail="$XRAY_FAIL_BUILD" \
+             | tee reports/xray-build-scan.txt
+
+      # ---------------------------------------------------------------- 9. Promotion
+      - name: Promote the same image to prod (no rebuild)
+        if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main')
+        run: |
+          jf rt build-promote "$BUILD_NAME" "$BUILD_NUMBER" "$DOCKER_PROD" \
+             --status="released" \
+             --comment="Passed Xray gates in GitHub run ${GITHUB_RUN_ID}" \
+             --props="release.gate=passed;vcs.revision=${GITHUB_SHA}" \
+             --copy=true
+          echo "PROD_IMAGE=${JF_HOST}/${DOCKER_PROD}/${IMAGE_NAME}:${BUILD_NUMBER}" >> "$GITHUB_ENV"
+
+      # ---------------------------------------------------------------- 10. Evidence
+      - name: Export CycloneDX SBOM and Xray scan data (JSON)
+        if: always() && env.IMAGE != ''
+        run: |
+          mkdir -p reports
+          COMPONENT="${IMAGE_NAME}:${BUILD_NUMBER}"
+          MANIFEST="${DOCKER_DEV}/${IMAGE_NAME}/${BUILD_NUMBER}/manifest.json"
+          cat > /tmp/sbom.json <<EOF
+          {"package_type":"docker","component_name":"${COMPONENT}","path":"${MANIFEST}",
+           "cyclonedx":true,"cyclonedx_format":"json","vex":true}
+          EOF
+          cat > /tmp/scan.json <<EOF
+          {"package_type":"docker","component_name":"${COMPONENT}","path":"${MANIFEST}",
+           "violations":true,"include_ignored_violations":true,"vulnerabilities":true,
+           "license":true,"operational_risk":true,"secrets":true,"services":true,
+           "applications":true,"iac":true,"malicious_code":true,"output_format":"json"}
+          EOF
+          # The image is indexed asynchronously after the push: retry until Xray has it
+          for kind in sbom scan; do
+            for i in $(seq 1 10); do
+              if jf xr curl -s --fail -XPOST /api/v2/component/exportDetails \
+                   -H "Content-Type: application/json" -d @/tmp/${kind}.json \
+                   -o "reports/xray-${kind}.zip"; then break; fi
+              echo "Xray export (${kind}) not ready yet, retry ${i}/10"; sleep 30
+            done
+            unzip -o -q "reports/xray-${kind}.zip" -d "reports/xray-${kind}" || true
+          done
+          ls -R reports
+
+      - name: Save runnable image as a tarball (deliverable)
+        if: env.PROD_IMAGE != ''
+        run: docker save "$IMAGE" | gzip > "reports/${IMAGE_NAME}-${BUILD_NUMBER}.tar.gz"
+
+      - name: Upload reports and evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: jfrog-evidence-${{ github.run_number }}
+          path: reports/
+          if-no-files-found: ignore
+
+      - name: Job summary
+        if: always()
+        run: |
+          {
+            echo "### Juice Shop secure pipeline"
+            echo "- Build-info: ${JF_URL}/ui/builds/${BUILD_NAME}/${BUILD_NUMBER}"
+            echo "- Dev image: \`${IMAGE:-not built}\`"
+            echo "- Prod image: \`${PROD_IMAGE:-not promoted}\`"
+            echo "- Run it: \`docker run --rm -p 3000:3000 ${PROD_IMAGE:-$IMAGE}\`"
+          } >> "$GITHUB_STEP_SUMMARY"

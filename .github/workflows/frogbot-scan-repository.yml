@@ -1,0 +1,29 @@
+# Frogbot: full scan of the default branch (SCA of the cloned GitHub repo),
+# results in GitHub Security > Code scanning and the JFrog Platform; optional fix PRs.
+name: "Frogbot Scan Repository"
+on:
+  workflow_dispatch:
+  push:
+    branches: [ master, main ]
+  schedule:
+    - cron: "0 3 * * *"     # daily at 03:00 UTC
+
+permissions:
+  contents: write
+  pull-requests: write
+  security-events: write
+  id-token: write
+
+jobs:
+  scan-repository:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: jfrog/frogbot@v3
+        env:
+          JF_URL: ${{ vars.JF_URL }}
+          JF_GIT_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          JF_DEPS_REPO: juice-npm-virtual
+        with:
+          oidc-provider-name: ${{ vars.JF_OIDC_PROVIDER }}

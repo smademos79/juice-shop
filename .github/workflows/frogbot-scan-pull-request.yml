@@ -1,0 +1,31 @@
+# Frogbot: scans every pull request (SCA + contextual analysis, SAST, secrets, IaC)
+# and comments only on the NEW issues the PR introduces.
+name: "Frogbot Scan Pull Request"
+on:
+  pull_request_target:
+    types: [ opened, synchronize ]
+
+permissions:
+  pull-requests: write
+  contents: read
+  security-events: write
+  id-token: write          # OIDC instead of a stored JFrog token
+
+jobs:
+  scan-pull-request:
+    runs-on: ubuntu-latest
+    # A protected environment: a maintainer must approve before code from a fork runs with secrets
+    environment: frogbot
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - uses: jfrog/frogbot@v3
+        env:
+          JF_URL: ${{ vars.JF_URL }}
+          JF_GIT_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Resolve dependencies through Artifactory while building the dependency tree
+          JF_DEPS_REPO: juice-npm-virtual
+        with:
+          oidc-provider-name: ${{ vars.JF_OIDC_PROVIDER }}

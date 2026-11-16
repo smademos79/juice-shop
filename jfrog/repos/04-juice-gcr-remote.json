@@ -1,0 +1,4 @@
+{ "key": "juice-gcr-remote", "rclass": "remote", "packageType": "docker",
+  "url": "https://gcr.io/", "xrayIndex": true,
+  "enableTokenAuthentication": true,
+  "description": "Curated proxy of gcr.io (distroless runtime images)" }

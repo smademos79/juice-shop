@@ -1,0 +1,3 @@
+{ "key": "juice-npm-remote", "rclass": "remote", "packageType": "npm",
+  "url": "https://registry.npmjs.org", "xrayIndex": true,
+  "description": "Curated proxy of npmjs.org (Curation enabled)" }

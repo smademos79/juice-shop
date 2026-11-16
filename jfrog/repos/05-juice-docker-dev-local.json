@@ -1,0 +1,3 @@
+{ "key": "juice-docker-dev-local", "rclass": "local", "packageType": "docker",
+  "dockerApiVersion": "V2", "xrayIndex": true, "maxUniqueTags": 20,
+  "description": "Images produced by CI, not yet released" }

@@ -1,0 +1,4 @@
+{ "key": "juice-dockerhub-remote", "rclass": "remote", "packageType": "docker",
+  "url": "https://registry-1.docker.io/", "xrayIndex": true,
+  "enableTokenAuthentication": true, "blockPullingSchema1": true,
+  "description": "Curated proxy of Docker Hub (base images)" }

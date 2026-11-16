@@ -1,0 +1,17 @@
+{
+  "name": "juice-security-gate",
+  "description": "Fail builds/images with Critical vulnerabilities that already have a fix",
+  "type": "security",
+  "rules": [
+    {
+      "name": "critical-with-fix",
+      "priority": 1,
+      "criteria": { "min_severity": "critical", "fix_version_dependant": true },
+      "actions": {
+        "fail_build": true,
+        "block_download": { "active": false, "unscanned": false },
+        "notify_watch_recipients": false
+      }
+    }
+  ]
+}

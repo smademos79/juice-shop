@@ -1,0 +1,11 @@
+{
+  "general_data": { "name": "juice-shop-watch", "description": "Juice Shop images and builds", "active": true },
+  "project_resources": {
+    "resources": [
+      { "type": "repository", "bin_mgr_id": "default", "name": "juice-docker-dev-local" },
+      { "type": "repository", "bin_mgr_id": "default", "name": "juice-docker-prod-local" },
+      { "type": "build", "bin_mgr_id": "default", "name": "juice-shop" }
+    ]
+  },
+  "assigned_policies": [ { "name": "juice-security-gate", "type": "security" } ]
+}

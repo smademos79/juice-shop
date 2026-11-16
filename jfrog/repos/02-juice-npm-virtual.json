@@ -1,0 +1,3 @@
+{ "key": "juice-npm-virtual", "rclass": "virtual", "packageType": "npm",
+  "repositories": ["juice-npm-remote"],
+  "description": "Single npm endpoint for developers and CI" }

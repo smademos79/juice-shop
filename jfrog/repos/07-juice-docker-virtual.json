@@ -1,0 +1,4 @@
+{ "key": "juice-docker-virtual", "rclass": "virtual", "packageType": "docker",
+  "repositories": ["juice-docker-dev-local", "juice-dockerhub-remote", "juice-gcr-remote"],
+  "defaultDeploymentRepo": "juice-docker-dev-local",
+  "description": "Single Docker endpoint: own images first, then curated remotes" }
