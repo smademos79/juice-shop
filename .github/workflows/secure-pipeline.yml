@@ -128,6 +128,7 @@ jobs:
           IMAGE="${JF_HOST}/${DOCKER_DEV}/${IMAGE_NAME}:${BUILD_NUMBER}"
           echo "IMAGE=${IMAGE}" >> "$GITHUB_ENV"
           DOCKER_BUILDKIT=1 docker build \
+            --provenance=false --sbom=false \
             --secret id=npmrc,src="$HOME/.npmrc" \
             --build-arg BUILDER_IMAGE="${JF_HOST}/${DOCKER_VIRTUAL}/library/node:${NODE_VERSION}-bookworm" \
             --build-arg RUNTIME_IMAGE="${JF_HOST}/${DOCKER_VIRTUAL}/distroless/nodejs${NODE_VERSION}-debian13:nonroot" \
