@@ -138,6 +138,18 @@ jobs:
             --label "jfrog.build.number=${BUILD_NUMBER}" \
             -t "${IMAGE}" .
 
+      - name: Smoke test the image
+        run: |
+          docker run -d --name juice -p 3000:3000 "$IMAGE"
+          ok=0
+          for i in $(seq 1 30); do
+            if curl -fs http://localhost:3000/rest/admin/application-version; then ok=1; break; fi
+            sleep 2
+          done
+          docker logs juice | tail -20
+          docker rm -f juice
+          test "$ok" -eq 1
+          
       # ---------------------------------------------------------------- 6. GATE 1
       - name: "GATE 1 - Xray scan of the image before push"
         run: |
