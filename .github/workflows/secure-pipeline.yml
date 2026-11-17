@@ -112,8 +112,10 @@ jobs:
       # ---------------------------------------------------------------- 4. Tests
       - name: Run unit tests (existing Juice Shop test suites)
         env:
-          CI: 'true'
-        run: npm test
+         CI: 'true'
+        run: |
+         npm run test:server
+         cd frontend && npm test  
 
       # ---------------------------------------------------------------- 5. Docker image
       - name: Log in to Artifactory Docker registry (OIDC credentials)
