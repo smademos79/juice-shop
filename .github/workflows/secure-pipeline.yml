@@ -91,10 +91,6 @@ jobs:
           npm config set "//${JF_HOST}/artifactory/api/npm/${NPM_VIRTUAL}/:_authToken" "${JF_TOKEN}"
           npm config get registry
 
-      - name: Curation audit (report packages that policies would block)
-        continue-on-error: true      # the real enforcement happens at download time (HTTP 403)
-        run: jf curation-audit --working-dirs=".,frontend"
-
       - name: Install frontend dependencies (recorded in build-info)
         working-directory: frontend
         run: >
