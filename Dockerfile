@@ -21,8 +21,7 @@ WORKDIR /juice-shop
 COPY . .
 
 # postinstall builds the Angular frontend and compiles the TypeScript server
-RUN --mount=type=secret,id=npmrc,target=/root/.npmrc,required=false \
-    npm i -g typescript ts-node && \
+RUN npm i -g typescript ts-node && \
     npm install --omit=dev --unsafe-perm && \
     npm dedupe --omit=dev
 
